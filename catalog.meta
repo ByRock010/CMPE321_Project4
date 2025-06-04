@@ -1,0 +1,2 @@
+house|6|1|name,str,20|origin,str,20|leader,str,20|military_strength,int,4|wealth,int,4|spice_production,int,4
+fremen|5|1|name,str,20|tribe,str,20|skill_level,int,4|allegiance,str,20|age,int,4
