@@ -566,8 +566,6 @@ def main():
 
     # At program start, clear any existing output and log
     open(OUTPUT_FILE, "w").close()
-    open(LOG_FILE, "w").close()
-
 
     with open(input_path, "r") as fin, open(OUTPUT_FILE, "a") as fout:
         for line in fin:
