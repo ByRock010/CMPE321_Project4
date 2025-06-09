@@ -17,6 +17,7 @@ def int_to_bytes(x: int) -> bytes:
 def bytes_to_int(b: bytes) -> int:
     return int.from_bytes(b, byteorder="big", signed=True)
 
+MAX_PAGES = 1000
 
 
 CATALOG_FILE = "catalog.meta"
@@ -36,25 +37,47 @@ def read_catalog():
       },
       ...
     }
+    Malformed lines in catalog.meta are skipped.
     """
     catalog = {}
     with open(CATALOG_FILE, "r") as f:
-        for line in f:
+        for lineno, line in enumerate(f, start=1):
             line = line.strip()
-            if not line: continue
+            if not line:
+                continue
+
             parts = line.split("|")
-            tname, nf, pk, *flds = parts
-            nf = int(nf); pk = int(pk)
-            fields = []
-            for fld in flds:
-                fname, ftype, flen = fld.split(",")
-                fields.append((fname, ftype, int(flen)))
-            catalog[tname] = {
-                "num_fields": nf,
-                "pk_index": pk,
-                "fields": fields
-            }
+            # we need at least: tname, nf, pk
+            if len(parts) < 3:
+                # malformed: not enough parts
+                continue
+
+            try:
+                tname, nf_str, pk_str, *flds = parts
+                nf = int(nf_str)
+                pk = int(pk_str)
+                fields = []
+                for fld in flds:
+                    fname, ftype, flen_str = fld.split(",")
+                    flen = int(flen_str)
+                    fields.append((fname, ftype, flen))
+
+                # sanity-check: number of parsed fields matches nf
+                if len(fields) != nf:
+                    continue
+
+                catalog[tname] = {
+                    "num_fields": nf,
+                    "pk_index": pk,
+                    "fields": fields
+                }
+
+            except (ValueError, IndexError):
+                # any parse error (bad int, wrong commas, etc.) → skip line
+                continue
+
     return catalog
+
 
 def write_catalog_entry(tname, num_fields, pk_index, fields_list):
     """
@@ -411,6 +434,16 @@ def handle_create_record(tokens: list):
 
         # If we reach here, no existing page had room → append a new page
         f.seek(file_size)  # move to EOF
+
+
+        # —— enforce your chosen pages-per-file cap ——
+        num_pages = file_size // page_size
+        if num_pages >= MAX_PAGES:
+            log_operation(op_string, False)
+            return False
+        # ————————————————————————————————
+
+
         # Initialize new page (same as above)
         new_header = bytearray([0] + [0]*NUM_SLOTS)
         new_header[0] = 1                   # will store 1 occupied slot
@@ -572,32 +605,34 @@ def main():
             line = line.strip()
             if not line:
                 continue
-            tokens = line.split()
-            op = tokens[0].lower()
 
-            if op == "create" and tokens[1].lower() == "type":
-                _ = handle_create_type(tokens)
-                # Do NOT write anything to output.txt here
+            # Wrap *every* command in try/except:
+            try:
+                tokens = line.split()
+                op = tokens[0].lower()
 
-            elif op == "create" and tokens[1].lower() == "record":
-                _ = handle_create_record(tokens)
-                # Do NOT write anything to output.txt here
+                if op == "create" and tokens[1].lower() == "type":
+                    _ = handle_create_type(tokens)
 
-            elif op == "delete" and tokens[1].lower() == "record":
-                _ = handle_delete_record(tokens)
-                # Do NOT write anything to output.txt here
+                elif op == "create" and tokens[1].lower() == "record":
+                    _ = handle_create_record(tokens)
 
-            elif op == "search" and tokens[1].lower() == "record":
-                values = handle_search_record(tokens)
-                if values is not None:
-                    # Only write the found record’s fields to output.txt
-                    fout.write(" ".join(values) + "\n")
-                # If values is None, do NOT write anything (no “failure”)
+                elif op == "delete" and tokens[1].lower() == "record":
+                    _ = handle_delete_record(tokens)
 
-            else:
-                # Completely ignore unknown commands in output.txt, but still log
+                elif op == "search" and tokens[1].lower() == "record":
+                    values = handle_search_record(tokens)
+                    if values is not None:
+                        fout.write(" ".join(values) + "\n")
+
+                else:
+                    # unknown command → log failure
+                    log_operation(line, False)
+
+            except Exception:
+                # catch everything, log as failure, and move on
                 log_operation(line, False)
-                # No write to output.txt
+                continue
 
 if __name__ == "__main__":
     main()
